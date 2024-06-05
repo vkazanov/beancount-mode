@@ -37,6 +37,7 @@
 (require 'cl-lib)
 (require 'xref)
 (require 'apropos)
+(require 'button)
 
 ;;;###autoload
 (add-to-list 'auto-mode-alist '("\\.beancount\\'" . beancount-mode))
@@ -213,6 +214,9 @@ from the open directive for the relevant account."
     "render_commas"
     "title"))
 
+(defconst beancount-tag-or-link-regexp
+  (concat "[\\#\\^][" beancount-tag-chars "]*"))
+
 (defconst beancount-date-regexp "[0-9]\\{4\\}[-/][0-9]\\{2\\}[-/][0-9]\\{2\\}"
   "A regular expression to match dates.")
 
@@ -308,9 +312,10 @@ from the open directive for the relevant account."
                                              (2 'beancount-directive))
     ;; Fontify section headers when composed with outline-minor-mode.
     (,(concat "^\\(" beancount-outline-regexp "\\).*") (0 (beancount-outline-face)))
-    ;; Tags and links.
-    (,(concat "\\#[" beancount-tag-chars "]*") . 'beancount-tag)
-    (,(concat "\\^[" beancount-tag-chars "]*") . 'beancount-link)
+
+    ;; Clickable tags and links.
+    (beancount--font-lock-clickable)
+
     ;; Accounts not covered by previous rules.
     (,beancount-account-regexp . 'beancount-account)
     ;; Number followed by currency not covered by previous rules.
@@ -1263,6 +1268,9 @@ Essentially a much simplified version of `next-line'."
 
 ;;; Filtering transactions by tags/links.
 ;;
+;; Implemented by utilising font-lock for adding text buttons that
+;; handle link and tag clicks (see
+;; https://www.gnu.org/software/emacs/manual/html_node/elisp/Making-Buttons.html).
 ;;
 ;; Invisibility introduced similar to how outline-minor-mode works -
 ;; through overlays and invisibility specs (see
@@ -1292,6 +1300,14 @@ beginning."
   (beancount-foreach-transaction
     (when (beancount--current-line-rematch-p (regexp-quote target))
       (beancount--show-current-transaction))))
+
+(defun beancount--handle-click (pos)
+  "Handle a tag/link click by only showing transactions with the
+link at POS."
+  (interactive "d")
+  (when (thing-at-point-looking-at beancount-tag-or-link-regexp 30)
+    (beancount-show (match-string-no-properties 0))))
+
 (defun beancount--hide-region (beg end)
   "Hide a region between BEG and END by putting an overlay over it."
   (remove-overlays beg end 'invisible 'beancount)
@@ -1327,6 +1343,18 @@ beginning."
   (save-excursion
     (goto-char (line-beginning-position))
     (re-search-forward regex (line-end-position) t)))
+
+(defun beancount--font-lock-clickable (limit)
+  "Add button-like behaviour properties to tags and links.
+Meant to be used by font-lock. See
+`beancount-font-lock-keywords'."
+  (while (re-search-forward beancount-tag-or-link-regexp limit t)
+    (let* ((c (string-to-char (match-string-no-properties 0)))
+           (face (if (equal c ?#) 'beancount-tag 'beancount-link)))
+      (make-text-button
+       (match-beginning 0) (match-end 0)
+       'action #'beancount--handle-click
+       'face face))))
 
 ;;; Xref backend
 
